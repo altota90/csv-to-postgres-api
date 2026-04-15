@@ -34,10 +34,31 @@ def get_data():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM mi_tabla LIMIT 10;")
+     # 📌 Get query params (defaults if not provided)
+    page = request.args.get("page", default=1, type=int)
+    limit = request.args.get("limit", default=10, type=int)
+
+    # 📌 Calculate OFFSET
+    offset = (page - 1) * limit
+
+    # 📌 Query with pagination
+    query = f"""
+        SELECT * FROM mi_tabla
+        LIMIT {limit} OFFSET {offset};
+    """
+
+    cursor.execute(query)
+
+    columns = [desc[0] for desc in cursor.description]
     rows = cursor.fetchall()
+
+    data = [dict(zip(columns, row)) for row in rows]
 
     cursor.close()
     conn.close()
 
-    return jsonify(rows)
+    return jsonify({
+        "page": page,
+        "limit": limit,
+        "data": data
+    })
