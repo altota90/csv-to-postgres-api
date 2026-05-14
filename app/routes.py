@@ -34,92 +34,189 @@ def get_data():
     conn = get_connection()
     cursor = conn.cursor()
 
-     # 📌 Get query params (defaults if not provided)
-    page = request.args.get("page", default=1, type=int)
-    limit = request.args.get("limit", default=10, type=int)  
-    
-    # 📌 Calculate OFFSET
-    offset = (page - 1) * limit
+    try:
+        # 📌 Pagination parameters
+        page = request.args.get("page", default=1, type=int)
+        limit = request.args.get("limit", default=10, type=int)
 
-    # 📌 Filters (asset system)
-    site = request.args.get("site")
-    team = request.args.get("team")
-    department = request.args.get("department")
-    manufacturer = request.args.get("manufacturer")
-    model = request.args.get("model")
-    asset_id = request.args.get("asset_id")
-    available = request.args.get("available_for_work_orders")
+        # Prevent invalid values
+        page = max(page, 1)
+        limit = max(min(limit, 100), 1)  # limit between 1 and 100
 
-# 📌 Build query dynamically
-    # =========================
-    query = "SELECT * FROM mi_tabla"
-    conditions = []
-    params = []
+        offset = (page - 1) * limit
 
-    if site:
-        conditions.append("site = %s")
-        params.append(site)
+        # 📌 Available filters
+        filters = {
+            "site": request.args.get("site"),
+            "team": request.args.get("team"),
+            "department": request.args.get("department"),
+            "manufacturer": request.args.get("manufacturer"),
+            "model": request.args.get("model"),
+            "asset_id": request.args.get("asset_id"),
+            "available_for_work_orders": request.args.get(
+                "available_for_work_orders"
+            ),
+        }
 
-    if team:
-        conditions.append("team = %s")
-        params.append(team)
+        # 📌 Build query dynamically
+        query = "SELECT * FROM mi_tabla"
+        conditions = []
+        params = []
 
-    if department:
-        conditions.append("department = %s")
-        params.append(department)
+        for column, value in filters.items():
+            if value:
+                conditions.append(f"{column} = %s")
+                params.append(value)
 
-    if manufacturer:
-        conditions.append("manufacturer = %s")
-        params.append(manufacturer)
+        # 📌 Add WHERE clause if filters exist
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
 
-    if model:
-        conditions.append("model = %s")
-        params.append(model)
+        # 📌 Pagination
+        query += " LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
 
-    if asset_id:
-        conditions.append("asset_id = %s")
-        params.append(asset_id)
+        # 📌 Execute query
+        cursor.execute(query, params)
 
-    if available:
-        conditions.append("available_for_work_orders = %s")
-        params.append(available)
+        # Convert rows to list of dictionaries
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+        data = [dict(zip(columns, row)) for row in rows]
 
-    # =========================
-    # 📌 WHERE clause
-    # =========================
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
+        # 📌 Count total rows matching filters (for frontend pagination)
+        count_query = "SELECT COUNT(*) FROM mi_tabla"
+        count_params = params[:-2]  # remove LIMIT and OFFSET
 
-    # =========================
-    # 📌 Pagination
-    # =========================
-    query += " LIMIT %s OFFSET %s"
-    params.extend([limit, offset])
+        if conditions:
+            count_query += " WHERE " + " AND ".join(conditions)
 
-    # 📌 Execute query
-    cursor.execute(query, params)
+        cursor.execute(count_query, count_params)
+        total_records = cursor.fetchone()[0]
 
-    columns = [desc[0] for desc in cursor.description]
-    rows = cursor.fetchall()
+        total_pages = (total_records + limit - 1) // limit
 
-    data = [dict(zip(columns, row)) for row in rows]
+        # Remove empty filters from response
+        applied_filters = {
+            key: value
+            for key, value in filters.items()
+            if value is not None and value != ""
+        }
 
-    cursor.close()
-    conn.close()
+        # 📌 JSON response
+        return jsonify({
+            "success": True,
+            "page": page,
+            "limit": limit,
+            "count": len(data),
+            "total_records": total_records,
+            "total_pages": total_pages,
+            "filters": applied_filters,
+            "data": data
+        })
 
-    # 📌 Response
-    return jsonify({
-        "page": page,
-        "limit": limit,
-        "filters": {
-            "site": site,
-            "team": team,
-            "department": department,
-            "manufacturer": manufacturer,
-            "model": model,
-            "asset_id": asset_id,
-            "available_for_work_orders": available
-        },
-        "count": len(data),
-        "data": data
-    })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+    finally:
+        cursor.close()
+        conn.close()
+
+# 🔍 Search assets
+@routes.route("/search", methods=["GET"])
+def search_assets():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # 📌 Search query
+        q = request.args.get("q")
+
+        if not q:
+            return jsonify({
+                "success": False,
+                "error": "Missing search query parameter 'q'"
+            }), 400
+
+        # 📌 Pagination parameters
+        page = request.args.get("page", default=1, type=int)
+        limit = request.args.get("limit", default=20, type=int)
+
+        # Prevent invalid values
+        page = max(page, 1)
+        limit = max(min(limit, 100), 1)
+
+        offset = (page - 1) * limit
+
+        # 📌 Search pattern
+        pattern = f"%{q}%"
+
+        # Columns to search with ILIKE
+        search_columns = [
+            "description",
+            "model",
+            "manufacturer",
+            "serial_number",
+            "site",
+        ]
+
+        # Build WHERE clause dynamically
+        conditions = [f"{column} ILIKE %s" for column in search_columns]
+        where_clause = " OR ".join(conditions)
+
+        # 📌 Main query
+        query = f"""
+            SELECT *
+            FROM mi_tabla
+            WHERE {where_clause}
+            LIMIT %s OFFSET %s
+        """
+
+        params = [pattern] * len(search_columns)
+        params.extend([limit, offset])
+
+        cursor.execute(query, params)
+
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+
+        data = [dict(zip(columns, row)) for row in rows]
+
+        # 📌 Count total matches
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM mi_tabla
+            WHERE {where_clause}
+        """
+
+        count_params = [pattern] * len(search_columns)
+
+        cursor.execute(count_query, count_params)
+        total_records = cursor.fetchone()[0]
+
+        total_pages = (total_records + limit - 1) // limit
+
+        # 📌 Response
+        return jsonify({
+            "success": True,
+            "query": q,
+            "page": page,
+            "limit": limit,
+            "count": len(data),
+            "total_records": total_records,
+            "total_pages": total_pages,
+            "data": data
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+    finally:
+        cursor.close()
+        conn.close()
