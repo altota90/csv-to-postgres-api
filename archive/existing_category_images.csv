@@ -1,8 +1,0 @@
-Generic Group,Generic SubType,image_path
-BATTERY,CHARGER,images/body_exhaust_system_charger_unit.jpg
-DEFIB,SIMULATOR,images/philips_heartstart_fr2_aed_trainer_battery_charger.jpg
-DRILL,ACCESSORY,images/stryker_system_6_battery_charger.jpg
-DRILL,SURGICAL,images/synthes_trs_drive_handpiece.jpg
-FALLS,MONITOR,images/commtech_7950_pager.jpg
-OPHTHALMO,SCOPE,images/keeler_lithium_double_charger.jpg
-X-RAY,LASER IMAG,images/kodak_969_hq_laser_imager.jpg
